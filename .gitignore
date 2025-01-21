@@ -1,0 +1,5 @@
+.env
+__pycache__/
+utils/__pycache__/speech_to_text.cpython-311.pyc
+.coverage
+.venv/
