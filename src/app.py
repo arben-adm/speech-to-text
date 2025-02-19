@@ -1,7 +1,7 @@
 import streamlit as st
-from src.speech_to_text import AudioTranscriber
-from src.text_processors import TextProcessor
-from src.prompts import AVAILABLE_PROMPTS, PromptTemplate
+from speech_to_text import AudioTranscriber
+from text_processors import TextProcessor
+from prompts import AVAILABLE_PROMPTS, PromptTemplate
 from streamlit_mic_recorder import mic_recorder
 import tempfile
 from dotenv import load_dotenv
@@ -45,11 +45,19 @@ class TranscriptionApp:
         with col2:
             st.markdown(f"**Active Provider:** {provider}")
         
-        # Model selection based on provider
-        model = st.selectbox(
-            "Select Model:",
-            options=self.get_available_models()
-        )
+        # Update model selection
+        models = self.get_available_models()
+        col1, col2 = st.columns(2)
+        with col1:
+            chat_model = st.selectbox(
+                "Select Chat Model:",
+                options=models['chat']
+            )
+        with col2:
+            transcription_model = st.selectbox(
+                "Select Transcription Model:",
+                options=models['transcription']
+            )
 
         # Prompt Template selection before tabs
         st.subheader("Automatic Text Processing")
@@ -79,7 +87,7 @@ class TranscriptionApp:
                 type=['mp3','wav','m4a']
             )
             if uploaded_file:
-                self.handle_file_upload(uploaded_file, model, prompt)
+                self.handle_file_upload(uploaded_file, transcription_model, prompt)
                 
         with tab2:
             st.write("Record your voice directly:")
@@ -92,14 +100,52 @@ class TranscriptionApp:
             
             if audio:
                 st.audio(audio['bytes'])
-                self.handle_recording(audio['bytes'], model, prompt)
+                self.handle_recording(audio['bytes'], transcription_model, prompt)
 
     def get_available_models(self):
         """Returns available models based on the provider"""
         if st.session_state.provider == 'groq':
-            return ["whisper-large-v3", "llama-3.3-70b-versatile"]
-        else:
-            return ["whisper-1", "gpt-4o-mini"]
+            return {
+                'chat': [
+                    "llama-3.3-70b-versatile",
+                    "llama-3.1-8b-instant",
+                    "llama-guard-3-8b",
+                    "llama3-70b-8192",
+                    "llama3-8b-8192",
+                    "mixtral-8x7b-32768",
+                    "gemma2-9b-it"
+                ],
+                'transcription': [
+                    "whisper-large-v3",
+                    "whisper-large-v3-turbo",
+                    "distil-whisper-large-v3-en"
+                ]
+            }
+        else:  # OpenAI
+            return {
+                'chat': [
+                    "gpt-4o",
+                    "gpt-4o-2024-08-06",
+                    "chatgpt-4o-latest",
+                    "gpt-4o-mini",
+                    "gpt-4o-mini-2024-07-18",
+                    "o1",
+                    "o1-2024-12-17",
+                    "o1-mini",
+                    "o1-mini-2024-09-12",
+                    "o3-mini",
+                    "o3-mini-2025-01-31",
+                    "o1-preview",
+                    "o1-preview-2024-09-12",
+                    "gpt-4o-realtime-preview",
+                    "gpt-4o-realtime-preview-2024-12-17",
+                    "gpt-4o-mini-realtime-preview",
+                    "gpt-4o-mini-realtime-preview-2024-12-17",
+                    "gpt-4o-audio-preview",
+                    "gpt-4o-audio-preview-2024-12-17"
+                ],
+                'transcription': ["whisper-1"]
+            }
 
     def handle_file_upload(self, uploaded_file, model, prompt):
         with st.spinner("Processing Audio..."):

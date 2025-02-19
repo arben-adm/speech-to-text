@@ -1,6 +1,6 @@
 from typing import Optional
 from openai import OpenAI, OpenAIError
-from src.prompts import PromptTemplate
+from prompts import PromptTemplate
 
 class TextProcessor:
     def __init__(self, provider: str, api_key: str):
