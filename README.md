@@ -44,7 +44,7 @@ OPENAI_API_KEY=your_openai_api_key
 
 Start the application with:
 ```bash
-streamlit run app.py
+streamlit run src/app.py --server.fileWatcherType=poll
 ```
 
 The application offers the following features:

@@ -79,7 +79,7 @@ class TranscriptionApp:
                 prompt = PromptTemplate(name=prompt.name, description=prompt.description, system_prompt=edited_system_prompt)
         
         # Tabs for input methods
-        tab1, tab2 = st.tabs(["File Upload", "Microphone Recording"])
+        tab1, tab2, tab3 = st.tabs(["File Upload", "Microphone Recording", "Text Input"])
         
         with tab1:
             uploaded_file = st.file_uploader(
@@ -101,6 +101,56 @@ class TranscriptionApp:
             if audio:
                 st.audio(audio['bytes'])
                 self.handle_recording(audio['bytes'], transcription_model, prompt)
+                
+        with tab3:
+            st.write("Enter your text directly:")
+            
+            text_input = st.chat_input("Type your message here...")
+            
+            if text_input:
+                is_valid, message = self.validate_text_input(text_input)
+                if not is_valid:
+                    st.error(message)
+                else:
+                    token_count = self.count_tokens(text_input)
+                    st.info(f"Approximate tokens: {token_count}")
+                    try:
+                        with st.spinner("Processing Text..."):
+                            processed_text = self.text_processor.process_text(
+                                text_input,
+                                prompt
+                            )
+                        if processed_text:
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.subheader("Original Text:")
+                                st.write(text_input)
+                            with col2:
+                                st.subheader(f"Processed Text ({prompt.name}):")
+                                st.write(processed_text)
+                            st.download_button(
+                                label="Download Processed Text",
+                                data=processed_text,
+                                file_name="processed_text.txt",
+                                mime="text/plain"
+                            )
+                    except Exception as e:
+                        st.error(f"Error processing text: {str(e)}")
+                        if "rate limits exceeded" in str(e).lower():
+                            st.warning("Please wait a moment before submitting another request.")
+                        
+    def validate_text_input(self, text: str) -> tuple[bool, str]:
+        """Validates the text input and returns (is_valid, message)"""
+        if not text.strip():
+            return False, "Text cannot be empty"
+        if len(text) > 5000:  # Reasonable limit for API calls
+            return False, "Text exceeds maximum length of 5000 characters"
+        return True, ""
+    
+    def count_tokens(self, text: str) -> int:
+        """Approximate token count for billing purposes"""
+        # Rough approximation: 4 characters per token
+        return len(text) // 4
 
     def get_available_models(self):
         """Returns available models based on the provider"""
