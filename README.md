@@ -8,7 +8,7 @@ This project enables speech-to-text conversion with the following main features:
 - Voice recording via microphone
 - Audio file transcription
 - Automated text processing with customizable prompt templates
-- Support for various AI providers (Groq, OpenAI)
+- Support for various AI providers (Groq, OpenAI, OpenRouter)
 - User-friendly Streamlit interface
 
 ## Installation with uv
@@ -30,10 +30,12 @@ uv pip install -r requirements.txt
 ```plaintext
 GROQ_API_KEY=your_groq_api_key
 OPENAI_API_KEY=your_openai_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
 ```
     - You can obtain the API keys here:
       - Groq: https://console.groq.com/keys
       - OpenAI: https://platform.openai.com/api-keys
+      - OpenRouter: https://openrouter.ai/keys
 
 4. Install FFmpeg:
     - Windows: Download FFmpeg from https://www.gyan.dev/ffmpeg/builds/ and add it to PATH

@@ -15,12 +15,60 @@ class TranscriptionApp:
         if 'provider' not in st.session_state:
             st.session_state.provider = 'groq'
         
+        # Initialize all providers and cache their models at startup
+        self.initialize_all_providers()
+        
+        # Setup the selected provider
         self.setup_provider()
+    
+    def initialize_all_providers(self):
+        """Initialize all providers and cache their models at startup"""
+        if 'cached_models' not in st.session_state:
+            st.session_state.cached_models = {}
+            
+            with st.spinner("Initializing providers and loading models..."):
+                # Initialize all providers
+                providers = ['groq', 'openai', 'openrouter']
+                
+                for provider in providers:
+                    api_key = os.getenv(f"{provider.upper()}_API_KEY")
+                    if not api_key:
+                        st.session_state.cached_models[provider] = {
+                            'chat': [f"No {provider.upper()}_API_KEY found in .env file"],
+                            'transcription': [f"No {provider.upper()}_API_KEY found in .env file"]
+                        }
+                        continue
+                    
+                    try:
+                        # Initialize provider
+                        transcriber = AudioTranscriber(provider=provider, api_key=api_key)
+                        text_processor = TextProcessor(provider=provider, api_key=api_key)
+                        
+                        # Cache models
+                        st.session_state.cached_models[provider] = {
+                            'chat': text_processor.get_available_models(),
+                            'transcription': transcriber.get_available_models()
+                        }
+                    except Exception as e:
+                        st.error(f"Error initializing {provider}: {str(e)}")
+                        st.session_state.cached_models[provider] = {
+                            'chat': [f"Error loading {provider} models"],
+                            'transcription': [f"Error loading {provider} models"]
+                        }
         
     def setup_provider(self):
         """Initializes the selected provider"""
         provider = st.session_state.provider.lower()
         api_key = os.getenv(f"{provider.upper()}_API_KEY")
+        
+        # Ensure environment variables are loaded for OpenRouter to access OpenAI and Groq
+        if provider == 'openrouter':
+            # Check if API keys are available and show warnings if not
+            if not os.getenv("OPENAI_API_KEY"):
+                st.warning("OpenAI API key not found. OpenAI models will not be available for transcription via OpenRouter.")
+            
+            if not os.getenv("GROQ_API_KEY"):
+                st.warning("Groq API key not found. Groq models will not be available for transcription via OpenRouter.")
         
         self.transcriber = AudioTranscriber(provider=provider, api_key=api_key)
         self.text_processor = TextProcessor(provider=provider, api_key=api_key)
@@ -33,8 +81,10 @@ class TranscriptionApp:
         with col1:
             provider = st.selectbox(
                 "Select AI Provider:",
-                options=['Groq', 'OpenAI'],
-                index=0 if st.session_state.provider == 'groq' else 1
+                options=['Groq', 'OpenAI', 'OpenRouter'],
+                index=0 if st.session_state.provider == 'groq' else 
+                      1 if st.session_state.provider == 'openai' else 2,
+                help="OpenRouter benötigt OpenAI und/oder Groq API-Schlüssel für die Transkription"
             )
             
             if provider.lower() != st.session_state.provider:
@@ -44,6 +94,10 @@ class TranscriptionApp:
                 
         with col2:
             st.markdown(f"**Active Provider:** {provider}")
+            
+        # Show OpenRouter help message
+        if provider.lower() == 'openrouter':
+            st.info("OpenRouter verwendet OpenAI und Groq für die Transkription. Bitte stellen Sie sicher, dass die entsprechenden API-Schlüssel in Ihrer .env-Datei konfiguriert sind.")
         
         # Update model selection
         models = self.get_available_models()
@@ -87,7 +141,7 @@ class TranscriptionApp:
                 type=['mp3','wav','m4a']
             )
             if uploaded_file:
-                self.handle_file_upload(uploaded_file, transcription_model, prompt)
+                self.handle_file_upload(uploaded_file, transcription_model, chat_model, prompt)
                 
         with tab2:
             st.write("Record your voice directly:")
@@ -100,7 +154,7 @@ class TranscriptionApp:
             
             if audio:
                 st.audio(audio['bytes'])
-                self.handle_recording(audio['bytes'], transcription_model, prompt)
+                self.handle_recording(audio['bytes'], transcription_model, chat_model, prompt)
                 
         with tab3:
             st.write("Enter your text directly:")
@@ -118,7 +172,8 @@ class TranscriptionApp:
                         with st.spinner("Processing Text..."):
                             processed_text = self.text_processor.process_text(
                                 text_input,
-                                prompt
+                                prompt,
+                                model=chat_model
                             )
                         if processed_text:
                             col1, col2 = st.columns(2)
@@ -138,66 +193,22 @@ class TranscriptionApp:
                         st.error(f"Error processing text: {str(e)}")
                         if "rate limits exceeded" in str(e).lower():
                             st.warning("Please wait a moment before submitting another request.")
-                        
-    def validate_text_input(self, text: str) -> tuple[bool, str]:
-        """Validates the text input and returns (is_valid, message)"""
-        if not text.strip():
-            return False, "Text cannot be empty"
-        if len(text) > 5000:  # Reasonable limit for API calls
-            return False, "Text exceeds maximum length of 5000 characters"
-        return True, ""
-    
-    def count_tokens(self, text: str) -> int:
-        """Approximate token count for billing purposes"""
-        # Rough approximation: 4 characters per token
-        return len(text) // 4
 
     def get_available_models(self):
         """Returns available models based on the provider"""
-        if st.session_state.provider == 'groq':
-            return {
-                'chat': [
-                    "llama-3.3-70b-versatile",
-                    "llama-3.1-8b-instant",
-                    "llama-guard-3-8b",
-                    "llama3-70b-8192",
-                    "llama3-8b-8192",
-                    "mixtral-8x7b-32768",
-                    "gemma2-9b-it"
-                ],
-                'transcription': [
-                    "whisper-large-v3",
-                    "whisper-large-v3-turbo",
-                    "distil-whisper-large-v3-en"
-                ]
-            }
-        else:  # OpenAI
-            return {
-                'chat': [
-                    "gpt-4o",
-                    "gpt-4o-2024-08-06",
-                    "chatgpt-4o-latest",
-                    "gpt-4o-mini",
-                    "gpt-4o-mini-2024-07-18",
-                    "o1",
-                    "o1-2024-12-17",
-                    "o1-mini",
-                    "o1-mini-2024-09-12",
-                    "o3-mini",
-                    "o3-mini-2025-01-31",
-                    "o1-preview",
-                    "o1-preview-2024-09-12",
-                    "gpt-4o-realtime-preview",
-                    "gpt-4o-realtime-preview-2024-12-17",
-                    "gpt-4o-mini-realtime-preview",
-                    "gpt-4o-mini-realtime-preview-2024-12-17",
-                    "gpt-4o-audio-preview",
-                    "gpt-4o-audio-preview-2024-12-17"
-                ],
-                'transcription': ["whisper-1"]
-            }
+        provider = st.session_state.provider.lower()
+        
+        # Use cached models if available
+        if 'cached_models' in st.session_state and provider in st.session_state.cached_models:
+            return st.session_state.cached_models[provider]
+        
+        # Fallback to direct API calls if cache is not available
+        return {
+            'chat': self.text_processor.get_available_models(),
+            'transcription': self.transcriber.get_available_models()
+        }
 
-    def handle_file_upload(self, uploaded_file, model, prompt):
+    def handle_file_upload(self, uploaded_file, model, chat_model, prompt):
         with st.spinner("Processing Audio..."):
             with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
                 tmp_file.write(uploaded_file.getvalue())
@@ -218,7 +229,8 @@ class TranscriptionApp:
                     with st.spinner("Processing Text..."):
                         processed_text = self.text_processor.process_text(
                             text, 
-                            prompt
+                            prompt,
+                            model=chat_model
                         )
                         if processed_text:
                             st.subheader(f"Processed Text ({prompt.name}):")
@@ -236,7 +248,7 @@ class TranscriptionApp:
                     
                 os.unlink(tmp_file.name)
 
-    def handle_recording(self, audio_bytes, model, prompt):
+    def handle_recording(self, audio_bytes, model, chat_model, prompt):
         with st.spinner("Processing Recording..."):
             tmp_file_path = ""
             try:
@@ -260,7 +272,8 @@ class TranscriptionApp:
                     with st.spinner("Processing Text..."):
                         processed_text = self.text_processor.process_text(
                             text, 
-                            prompt
+                            prompt,
+                            model=chat_model
                         )
                         if processed_text:
                             st.subheader(f"Processed Text ({prompt.name}):")
@@ -277,6 +290,19 @@ class TranscriptionApp:
                             break
                         except PermissionError:
                             time.sleep(0.1)
+    
+    def validate_text_input(self, text: str) -> tuple[bool, str]:
+        """Validates the text input and returns (is_valid, message)"""
+        if not text.strip():
+            return False, "Text cannot be empty"
+        if len(text) > 5000:  # Reasonable limit for API calls
+            return False, "Text exceeds maximum length of 5000 characters"
+        return True, ""
+    
+    def count_tokens(self, text: str) -> int:
+        """Approximate token count for billing purposes"""
+        # Rough approximation: 4 characters per token
+        return len(text) // 4
 
 if __name__ == "__main__":
     app = TranscriptionApp()
