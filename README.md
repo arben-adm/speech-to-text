@@ -10,6 +10,7 @@ This project enables speech-to-text conversion with the following main features:
 - Automated text processing with customizable prompt templates
 - Support for various AI providers (Groq, OpenAI, OpenRouter)
 - User-friendly Streamlit interface
+- Robust error handling for API and session-related issues
 
 ## Installation with uv
 
@@ -64,14 +65,22 @@ The application offers the following features:
     - Edit the system prompt if needed
     - The processed text will be displayed and can be downloaded
 
+### Provider-Specific Notes
+
+#### Groq
+- Groq only supports the `whisper-large-v3` model for transcription
+- If you select any other transcription model with Groq, it will automatically use `whisper-large-v3`
+- The application handles this gracefully and provides appropriate warnings
+
 ## How it Works
 
 1. The `AudioTranscriber` class initializes speech recognition
 2. Audio is either recorded via microphone or loaded from a file
-3. Audio quality is automatically optimized
-4. Transcription is performed via the chosen AI API (Groq or OpenAI)
+3. Audio quality is automatically optimized (downsampled to 16kHz mono)
+4. Transcription is performed via the chosen AI API (Groq, OpenAI, or OpenRouter)
 5. The recognized text is returned and can be further processed
 6. The `TextProcessor` class processes the transcribed text based on the chosen prompt template
+7. Robust error handling catches and provides user-friendly messages for common issues
 
 ## System Requirements
 
@@ -80,6 +89,7 @@ The application offers the following features:
 - Internet connection (for AI APIs)
 - `.env` file with valid API keys
 - FFmpeg (in PATH)
+- Streamlit 1.44.1 or higher
 
 ## Development
 
@@ -87,18 +97,43 @@ The application offers the following features:
 
 The AudioTranscriber class provides functions for speech recognition:
 
-- `transcribe_file(file_path)`: Transcribes an audio file
-- `transcribe_microphone(timeout=5)`: Transcribes microphone input
+- `transcribe_file(file_path, model)`: Transcribes an audio file using the specified model
 
 ### TextProcessor Class
 
 The TextProcessor class processes the transcribed text:
 
-- `process_text(text, prompt_template)`: Processes text based on a prompt template
+- `process_text(text, prompt_template, model, temperature)`: Processes text based on a prompt template
+
+### Provider Classes
+
+The application uses a provider pattern to support different AI services:
+
+- `GroqAudioProvider`: Handles audio transcription via Groq API
+- `GroqTextProvider`: Handles text processing via Groq API
+- `OpenAIAudioProvider`: Handles audio transcription via OpenAI API
+- `OpenAITextProvider`: Handles text processing via OpenAI API
+- `OpenRouterProvider`: Handles text processing via OpenRouter API
 
 ### Prompt Templates
 
 Prompt templates are defined in `prompts.py` and can be easily extended or customized.
+
+## Troubleshooting
+
+### Common Issues
+
+1. **AppSession Error**:
+   - If you encounter an error message like `AttributeError: 'AppSession' object has no attribute '_scriptrunner'`, try restarting the application
+   - This is a known issue with certain Streamlit versions and is handled gracefully by the application
+
+2. **Model Compatibility**:
+   - Groq only supports `whisper-large-v3` for transcription
+   - If you select a different model with Groq, it will automatically use `whisper-large-v3`
+
+3. **API Connection Issues**:
+   - If you encounter API connection errors, check your internet connection and API keys
+   - Ensure your API keys are correctly set in the `.env` file
 
 ## Contributing
 
