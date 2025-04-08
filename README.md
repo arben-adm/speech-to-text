@@ -119,6 +119,33 @@ The application uses a provider pattern to support different AI services:
 
 Prompt templates are defined in `prompts.py` and can be easily extended or customized.
 
+### Running Tests
+
+The project includes unit tests and integration tests. To run the tests:
+
+```bash
+# Run all tests
+python -m pytest
+
+# Run specific test file
+python -m pytest tests/test_transcriber.py
+
+# Run with verbose output
+python -m pytest -v
+
+# Skip integration tests
+python -m pytest -m "not integration"
+```
+
+### Project Structure
+
+The project uses a specific import structure:
+
+- **App Code**: Uses relative imports (e.g., `from api_providers.provider_factory import ProviderFactory`)
+- **Test Code**: Uses absolute imports with the `src` prefix (e.g., `from src.speech_to_text import AudioTranscriber`)
+
+This structure allows both the app and tests to run correctly. The `conftest.py` file in the tests directory handles the path configuration for tests.
+
 ## Troubleshooting
 
 ### Common Issues
