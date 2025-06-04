@@ -9,6 +9,8 @@ This project enables speech-to-text conversion with the following main features:
 - Audio file transcription
 - Automated text processing with customizable prompt templates
 - Support for various AI providers (Groq, OpenAI, OpenRouter)
+- AI Agent with MCP (Model Context Protocol) server integration
+- Chat interface for direct interaction with the AI Agent
 - User-friendly Streamlit interface
 - Robust error handling for API and session-related issues
 
@@ -65,6 +67,19 @@ The application offers the following features:
     - Edit the system prompt if needed
     - The processed text will be displayed and can be downloaded
 
+4. **MCP Configuration**:
+    - Configure Model Context Protocol (MCP) servers
+    - Add and remove MCP servers with custom configurations
+
+5. **MCP Tools**:
+    - Explore and use available tools from connected MCP servers
+    - Execute MCP tools with custom parameters
+
+6. **AI Agent**:
+    - Chat directly with an AI agent that has access to both speech-to-text functionality and MCP tools
+    - Process audio files and recordings with the agent
+    - Customize the agent's system prompt and view available tools
+
 ### Provider-Specific Notes
 
 #### Groq
@@ -80,7 +95,9 @@ The application offers the following features:
 4. Transcription is performed via the chosen AI API (Groq, OpenAI, or OpenRouter)
 5. The recognized text is returned and can be further processed
 6. The `TextProcessor` class processes the transcribed text based on the chosen prompt template
-7. Robust error handling catches and provides user-friendly messages for common issues
+7. The `MCPClient` class connects to configured MCP servers and provides access to their tools
+8. The `Agent` and `SpeechAgent` classes combine the speech-to-text functionality with MCP server tools
+9. Robust error handling catches and provides user-friendly messages for common issues
 
 ## System Requirements
 
@@ -114,6 +131,21 @@ The application uses a provider pattern to support different AI services:
 - `OpenAIAudioProvider`: Handles audio transcription via OpenAI API
 - `OpenAITextProvider`: Handles text processing via OpenAI API
 - `OpenRouterProvider`: Handles text processing via OpenRouter API
+
+### MCP Integration
+
+The MCP (Model Context Protocol) integration enables connecting to external tools:
+
+- `MCPClient`: Manages connections to MCP servers and tool execution
+- `MCPServerIntegration`: Provides easy configuration and management of MCP servers
+
+### Agent Classes
+
+The application includes AI agent capabilities:
+
+- `Agent`: Base class for AI agents that can use both local tools and MCP server tools
+- `SpeechAgent`: Extension of Agent that integrates speech-to-text functionality
+- `Tool`: Base class for implementing local tools that agents can use
 
 ### Prompt Templates
 

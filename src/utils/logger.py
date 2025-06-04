@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Optional, Union
 import os
 
 class AppLogger:
@@ -19,3 +19,35 @@ class AppLogger:
             self.logger.addHandler(file_handler)
             
         self.logger.addHandler(console_handler)
+        
+    def info(self, message: str) -> None:
+        self.logger.info(message)
+        
+    def error(self, message: str) -> None:
+        self.logger.error(message)
+        
+    def warning(self, message: str) -> None:
+        self.logger.warning(message)
+        
+    def debug(self, message: str) -> None:
+        self.logger.debug(message)
+
+
+# Cache for loggers to avoid creating multiple instances
+_loggers = {}
+
+def get_logger(name: str, log_file: Optional[str] = None) -> AppLogger:
+    """
+    Get or create a logger instance
+    
+    Args:
+        name: Name of the logger (usually __name__)
+        log_file: Optional log file name
+        
+    Returns:
+        AppLogger instance
+    """
+    global _loggers
+    if name not in _loggers:
+        _loggers[name] = AppLogger(name, log_file)
+    return _loggers[name]

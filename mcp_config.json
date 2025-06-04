@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "sequential-thinking": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "C:\\Users\\arben\\Desktop\\Github\\mcp-python\\mcp-sequential-thinking\\mcp_sequential_thinking",
+        "run",
+        "server.py"
+      ]
+    },
+    "brave-search": {
+            "command": "uv",
+            "args": [
+                "--directory",
+                "C:\\Users\\arben\\Desktop\\Github\\mcp-python\\brave-mcp-search\\src",
+                "run",
+                "server.py"
+            ],
+            "env": {
+                "BRAVE_API_KEY": "BSA6fPgp-r9DPbly0pfdlYEu24qMY3c"
+            }
+    }
+  }
+}
