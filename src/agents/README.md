@@ -66,10 +66,10 @@ from src.agents.speech_agent import SpeechAgent
 speech_agent = SpeechAgent(
     name="SpeechAssistant",
     system="You are a helpful assistant that can process and analyze audio transcriptions.",
-    provider="openai",
-    api_key="your-api-key",
-    transcription_model="whisper-1",
-    chat_model="gpt-4",
+    provider="openrouter",
+    api_key="your-openrouter-api-key",
+    transcription_model="openai/whisper-1",
+    chat_model="openai/gpt-4o-mini",
     mcp_servers=[
         {
             "type": "stdio",
@@ -86,9 +86,10 @@ speech_agent.connect()
 # Transcribe and process audio
 result = await speech_agent.transcribe_and_process(
     audio_bytes=audio_data,
-    transcription_model="whisper-1",
-    chat_model="gpt-4",
-    system_prompt="Analyze this transcript and highlight key points."
+    transcription_model="openai/whisper-1",
+    chat_model="openai/gpt-4o-mini",
+    system_prompt="Analyze this transcript and highlight key points.",
+    mode="stt"  # or "chat_audio" to route the audio through a multimodal chat model
 )
 
 # Access results
@@ -187,10 +188,10 @@ Extension of the Agent class that provides integration with speech-to-text funct
 SpeechAgent(
     name: str,
     system: str,
-    provider: str,
     api_key: str,
     transcription_model: str,
     chat_model: str,
+    provider: str = "openrouter",
     mcp_servers: List[Dict[str, Any]] = None,
     mcp_config_path: str = "mcp_config.json"
 )
@@ -200,7 +201,7 @@ SpeechAgent(
 
 In addition to all methods from the Agent class, SpeechAgent provides:
 
-- `transcribe_and_process(audio_bytes, transcription_model, chat_model, system_prompt, callback=None)`: Transcribe audio and process the resulting text
+- `transcribe_and_process(audio_bytes, transcription_model, chat_model, system_prompt, mode="stt", callback=None)`: Transcribe audio (via OpenRouter's STT endpoint or a multimodal chat model, depending on `mode`) and process the resulting text
 
 ### MCPServerIntegration Class
 

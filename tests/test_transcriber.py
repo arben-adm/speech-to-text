@@ -17,12 +17,12 @@ class TestAudioTranscriber:
             mock_factory.return_value = mock_provider
             
             # Act
-            transcriber = AudioTranscriber(provider='groq', api_key=mock_api_key)
+            transcriber = AudioTranscriber(provider='openrouter', api_key=mock_api_key)
             
             # Assert
-            assert transcriber.provider == 'groq'
+            assert transcriber.provider == 'openrouter'
             assert transcriber.audio_provider == mock_provider
-            mock_factory.assert_called_once_with('groq', mock_api_key)
+            mock_factory.assert_called_once_with('openrouter', mock_api_key)
     
     def test_transcribe_file_success(self, mock_api_key):
         """Test successful file transcription"""
@@ -33,13 +33,13 @@ class TestAudioTranscriber:
             mock_factory.return_value = mock_provider
             
             # Act
-            transcriber = AudioTranscriber(provider='groq', api_key=mock_api_key)
+            transcriber = AudioTranscriber(provider='openrouter', api_key=mock_api_key)
             result, success = transcriber.transcribe_file("dummy_path.wav", "whisper-large-v3")
             
             # Assert
             assert result == "Transcription result"
             assert success is True
-            mock_provider.transcribe_file.assert_called_once_with("dummy_path.wav", "whisper-large-v3")
+            mock_provider.transcribe_file.assert_called_once_with("dummy_path.wav", "whisper-large-v3", mode="stt")
     
     def test_transcribe_file_failure(self, mock_api_key):
         """Test failed file transcription"""
@@ -50,13 +50,13 @@ class TestAudioTranscriber:
             mock_factory.return_value = mock_provider
             
             # Act
-            transcriber = AudioTranscriber(provider='groq', api_key=mock_api_key)
+            transcriber = AudioTranscriber(provider='openrouter', api_key=mock_api_key)
             result, success = transcriber.transcribe_file("dummy_path.wav", "whisper-large-v3")
             
             # Assert
             assert result == "Error message"
             assert success is False
-            mock_provider.transcribe_file.assert_called_once_with("dummy_path.wav", "whisper-large-v3")
+            mock_provider.transcribe_file.assert_called_once_with("dummy_path.wav", "whisper-large-v3", mode="stt")
     
     def test_get_available_models(self, mock_api_key):
         """Test getting available transcription models"""
@@ -67,7 +67,7 @@ class TestAudioTranscriber:
             mock_factory.return_value = mock_provider
             
             # Act
-            transcriber = AudioTranscriber(provider='groq', api_key=mock_api_key)
+            transcriber = AudioTranscriber(provider='openrouter', api_key=mock_api_key)
             models = transcriber.get_available_models()
             
             # Assert

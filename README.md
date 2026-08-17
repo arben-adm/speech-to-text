@@ -8,7 +8,9 @@ This project enables speech-to-text conversion with the following main features:
 - Voice recording via microphone
 - Audio file transcription
 - Automated text processing with customizable prompt templates
-- Support for various AI providers (Groq, OpenAI, OpenRouter)
+- Runs entirely on [OpenRouter](https://openrouter.ai) — one API key for both transcription and chat, across hundreds of models
+- Toggleable transcription mode: OpenRouter's dedicated Speech-to-Text endpoint, or a multimodal chat completions model fed the raw audio
+- Toggleable automatic text processing after transcription
 - AI Agent with MCP (Model Context Protocol) server integration
 - Chat interface for direct interaction with the AI Agent
 - User-friendly Streamlit interface
@@ -21,24 +23,18 @@ This project enables speech-to-text conversion with the following main features:
 pip install uv
 ```
 
-2. Create a new virtual environment and install dependencies:
+2. Sync the virtual environment and install all dependencies (declared in `pyproject.toml`, pinned in `uv.lock`):
 ```bash
-uv venv
-source .venv/bin/activate  # For Unix-based systems
-.venv\Scripts\activate.bat  # For Windows
-uv pip install -r requirements.txt
+uv sync
 ```
+This creates `.venv` and installs the exact locked versions, including dev dependencies (`pytest`, `pytest-asyncio`). No manual `venv`/`activate`/`pip install` steps needed — prefix commands with `uv run` (e.g. `uv run streamlit run src/app.py`) to run them inside the synced environment, or activate `.venv` yourself as usual.
 
-3. Create a `.env` file and add your API keys:
+3. Create a `.env` file and add your API key:
 ```plaintext
-GROQ_API_KEY=your_groq_api_key
-OPENAI_API_KEY=your_openai_api_key
 OPENROUTER_API_KEY=your_openrouter_api_key
 ```
-    - You can obtain the API keys here:
-      - Groq: https://console.groq.com/keys
-      - OpenAI: https://platform.openai.com/api-keys
-      - OpenRouter: https://openrouter.ai/keys
+    - Get your key here: https://openrouter.ai/keys
+    - This is the only API key the app needs. All transcription and chat requests are routed through OpenRouter (`https://openrouter.ai/api/v1`), which in turn gives you access to OpenAI, Groq-hosted, Anthropic, Google, and many other models via a single key.
 
 4. Install FFmpeg:
     - Windows: Download FFmpeg from https://www.gyan.dev/ffmpeg/builds/ and add it to PATH
@@ -49,7 +45,7 @@ OPENROUTER_API_KEY=your_openrouter_api_key
 
 Start the application with:
 ```bash
-streamlit run src/app.py --server.fileWatcherType=poll
+uv run streamlit run src/app.py --server.fileWatcherType=poll
 ```
 
 The application offers the following features:
@@ -80,31 +76,34 @@ The application offers the following features:
     - Process audio files and recordings with the agent
     - Customize the agent's system prompt and view available tools
 
-### Provider-Specific Notes
+### Interactive Toggles
 
-#### Groq
-- Groq only supports the `whisper-large-v3` model for transcription
-- If you select any other transcription model with Groq, it will automatically use `whisper-large-v3`
-- The application handles this gracefully and provides appropriate warnings
+The transcription tab (and the agent's "Process audio" tab) exposes two toggles:
+
+- **Transcription mode**:
+  - *Speech-to-Text endpoint* — uses OpenRouter's dedicated `/audio/transcriptions` endpoint (Whisper-class and token-priced STT models). Fast, cheap, produces a verbatim transcript.
+  - *Chat Completions (multimodal audio)* — sends the audio as `input_audio` content to a multimodal chat model (e.g. Gemini, GPT-4o Audio). Useful when you want the model to reason about the audio rather than just transcribe it verbatim.
+  - The available model list updates automatically based on the selected mode.
+- **Automatically process transcription** — when enabled (default), the transcript is immediately run through the selected prompt template. Disable it to only get the raw transcript (with a download button).
 
 ## How it Works
 
 1. The `AudioTranscriber` class initializes speech recognition
 2. Audio is either recorded via microphone or loaded from a file
 3. Audio quality is automatically optimized (downsampled to 16kHz mono)
-4. Transcription is performed via the chosen AI API (Groq, OpenAI, or OpenRouter)
-5. The recognized text is returned and can be further processed
-6. The `TextProcessor` class processes the transcribed text based on the chosen prompt template
+4. Transcription is performed via OpenRouter, using either its dedicated transcription endpoint or a multimodal chat model, depending on the selected mode
+5. The recognized text is returned and, if auto-processing is enabled, further processed
+6. The `TextProcessor` class processes the transcribed text based on the chosen prompt template (also via OpenRouter)
 7. The `MCPClient` class connects to configured MCP servers and provides access to their tools
 8. The `Agent` and `SpeechAgent` classes combine the speech-to-text functionality with MCP server tools
 9. Robust error handling catches and provides user-friendly messages for common issues
 
 ## System Requirements
 
-- Python 3.9 or higher
+- Python 3.10 or higher (required by the `mcp` package)
 - Working microphone (for live recordings)
-- Internet connection (for AI APIs)
-- `.env` file with valid API keys
+- Internet connection (for the OpenRouter API)
+- `.env` file with a valid `OPENROUTER_API_KEY`
 - FFmpeg (in PATH)
 - Streamlit 1.44.1 or higher
 
@@ -124,13 +123,12 @@ The TextProcessor class processes the transcribed text:
 
 ### Provider Classes
 
-The application uses a provider pattern to support different AI services:
+The application uses a provider pattern, with OpenRouter as the sole backend:
 
-- `GroqAudioProvider`: Handles audio transcription via Groq API
-- `GroqTextProvider`: Handles text processing via Groq API
-- `OpenAIAudioProvider`: Handles audio transcription via OpenAI API
-- `OpenAITextProvider`: Handles text processing via OpenAI API
-- `OpenRouterProvider`: Handles text processing via OpenRouter API
+- `OpenRouterAudioProvider`: Handles audio transcription via OpenRouter, either through the dedicated `/audio/transcriptions` endpoint ("stt" mode) or by sending audio to a multimodal chat model ("chat_audio" mode)
+- `OpenRouterTextProvider`: Handles text processing via OpenRouter's chat completions API
+
+Only one API key (`OPENROUTER_API_KEY`) is required; OpenRouter routes to whichever underlying model the selected model slug (e.g. `openai/whisper-1`, `anthropic/claude-sonnet-4.5`) points to.
 
 ### MCP Integration
 
@@ -157,16 +155,16 @@ The project includes unit tests and integration tests. To run the tests:
 
 ```bash
 # Run all tests
-python -m pytest
+uv run pytest
 
 # Run specific test file
-python -m pytest tests/test_transcriber.py
+uv run pytest tests/test_transcriber.py
 
 # Run with verbose output
-python -m pytest -v
+uv run pytest -v
 
 # Skip integration tests
-python -m pytest -m "not integration"
+uv run pytest -m "not integration"
 ```
 
 ### Project Structure
@@ -187,12 +185,12 @@ This structure allows both the app and tests to run correctly. The `conftest.py`
    - This is a known issue with certain Streamlit versions and is handled gracefully by the application
 
 2. **Model Compatibility**:
-   - Groq only supports `whisper-large-v3` for transcription
-   - If you select a different model with Groq, it will automatically use `whisper-large-v3`
+   - If a selected model isn't found, the app falls back to `openai/whisper-1` for transcription
+   - Not every model supports both transcription modes — switching the "Transcription mode" toggle refreshes the model list to only show models that support the selected mode
 
 3. **API Connection Issues**:
-   - If you encounter API connection errors, check your internet connection and API keys
-   - Ensure your API keys are correctly set in the `.env` file
+   - If you encounter API connection errors, check your internet connection and API key
+   - Ensure `OPENROUTER_API_KEY` is correctly set in the `.env` file
 
 ## Contributing
 

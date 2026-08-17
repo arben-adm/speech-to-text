@@ -20,8 +20,6 @@ class TestAppFlow:
     @pytest.fixture
     def mock_env_vars(self, monkeypatch):
         """Set up mock environment variables for testing"""
-        monkeypatch.setenv("GROQ_API_KEY", "mock-groq-key")
-        monkeypatch.setenv("OPENAI_API_KEY", "mock-openai-key")
         monkeypatch.setenv("OPENROUTER_API_KEY", "mock-openrouter-key")
     
     @pytest.fixture
@@ -124,15 +122,18 @@ class TestAppFlow:
             mock_get_client.return_value = mock_mcp_client
             
             # Set up session state
-            mock_streamlit.session_state.provider = "groq"
+            mock_streamlit.session_state.provider = "openrouter"
+            mock_streamlit.session_state.stt_mode = "stt"
+            mock_streamlit.session_state.auto_process = True
             mock_streamlit.session_state.transcription_cache = {}
             mock_streamlit.session_state.processed_text_cache = {}
             mock_streamlit.session_state.agent_messages = []
             mock_streamlit.session_state.mcp_connected = False
             mock_streamlit.session_state.cached_models = {
-                "groq": {
-                    "chat": ["llama-3.3-70b-versatile"],
-                    "transcription": ["whisper-large-v3"]
+                "openrouter": {
+                    "chat": ["openai/gpt-4o-mini"],
+                    "transcription_stt": ["openai/whisper-1"],
+                    "transcription_chat_audio": ["google/gemini-2.5-flash"]
                 }
             }
             

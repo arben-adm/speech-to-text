@@ -6,8 +6,12 @@ import sys
 import pytest
 from dotenv import load_dotenv
 
-# Add the src directory to the path for absolute imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Add the project root (for `from src...` imports) and the src directory
+# itself (since modules under src/ import each other as top-level packages,
+# e.g. `from api_providers...`) to the path
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, ROOT_DIR)
+sys.path.insert(0, os.path.join(ROOT_DIR, 'src'))
 
 # Load environment variables from .env file
 load_dotenv()

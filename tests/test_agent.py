@@ -132,7 +132,7 @@ class TestAgent:
         
         # Mock the text processor
         agent.text_processor = MagicMock()
-        agent.text_processor.provider = "groq"
+        agent.text_processor.provider = "openrouter"
         agent.text_processor.process_text.return_value = "Response from the AI model"
         
         # Act
@@ -154,7 +154,7 @@ class TestAgent:
         
         # Mock the text processor
         agent.text_processor = MagicMock()
-        agent.text_processor.provider = "groq"
+        agent.text_processor.provider = "openrouter"
         # First response is a tool call, second is the final response
         agent.text_processor.process_text.side_effect = [
             '```json\n{"tool": "mock_tool", "args": {"arg": "value"}}\n```',

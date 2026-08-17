@@ -8,30 +8,35 @@ class AudioTranscriber:
         Initialize AudioTranscriber with chosen provider
 
         Args:
-            provider: Provider name ('openai' or 'groq')
+            provider: Provider name (currently only 'openrouter')
             api_key: API key for the provider
         """
         self.provider = provider.lower()
         self.audio_provider = ProviderFactory.get_audio_provider(provider, api_key)
 
-    def transcribe_file(self, file_path: str, model: str) -> Tuple[str, bool]:
+    def transcribe_file(self, file_path: str, model: str, mode: str = "stt") -> Tuple[str, bool]:
         """
         Transcribe an audio file using the selected provider
 
         Args:
             file_path: Path to the audio file
             model: Model to use for transcription
+            mode: "stt" (dedicated transcription endpoint) or "chat_audio"
+                  (multimodal chat completions model)
 
         Returns:
             Tuple containing (transcription_text, success_flag)
         """
-        return self.audio_provider.transcribe_file(file_path, model)
+        return self.audio_provider.transcribe_file(file_path, model, mode=mode)
 
-    def get_available_models(self) -> List[str]:
+    def get_available_models(self, mode: str = "stt") -> List[str]:
         """
         Get available transcription models for the current provider
+
+        Args:
+            mode: "stt" or "chat_audio", see transcribe_file
 
         Returns:
             List of available model names
         """
-        return self.audio_provider.get_available_transcription_models()
+        return self.audio_provider.get_available_transcription_models(mode=mode)

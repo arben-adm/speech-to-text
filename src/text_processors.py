@@ -9,7 +9,7 @@ class TextProcessor:
         Initialize TextProcessor with selected provider
 
         Args:
-            provider: Provider name ('openai' or 'groq')
+            provider: Provider name (currently only 'openrouter')
             api_key: API key for the provider
         """
         self.provider = provider.lower()

@@ -27,26 +27,28 @@ class TranscriptionTool(Tool):
     async def execute(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """
         Execute the transcription
-        
+
         Args:
             args: Dictionary containing:
                 - file_path: Path to the audio file
                 - model: Optional transcription model
-                
+                - mode: Optional transcription mode ("stt" or "chat_audio")
+
         Returns:
             Dictionary with transcription result
         """
         file_path = args.get("file_path", "")
         model = args.get("model", self.default_model)
-        
+        mode = args.get("mode", "stt")
+
         if not file_path:
             return {
                 "error": "No file path provided",
                 "isError": True
             }
-            
+
         try:
-            text, success = self.transcriber.transcribe_file(file_path, model)
+            text, success = self.transcriber.transcribe_file(file_path, model, mode=mode)
             
             if success:
                 return {
@@ -144,23 +146,23 @@ class SpeechAgent(Agent):
         self,
         name: str,
         system: str,
-        provider: str,
         api_key: str,
         transcription_model: str,
         chat_model: str,
+        provider: str = "openrouter",
         mcp_servers: List[Dict[str, Any]] = None,
         mcp_config_path: str = "mcp_config.json"
     ):
         """
         Initialize Speech Agent
-        
+
         Args:
             name: Agent name
             system: System prompt for the agent
-            provider: API provider name ('openai', 'groq', etc.)
-            api_key: API key for the provider
+            api_key: OpenRouter API key
             transcription_model: Default transcription model
             chat_model: Default chat model
+            provider: API provider name (currently only 'openrouter')
             mcp_servers: List of MCP server configurations to add
             mcp_config_path: Path to MCP configuration file
         """
@@ -189,18 +191,21 @@ class SpeechAgent(Agent):
         transcription_model: str,
         chat_model: str,
         system_prompt: str,
+        mode: str = "stt",
         callback: Optional[Callable[[str, str, str], Awaitable[None]]] = None
     ) -> Dict[str, str]:
         """
         Transcribe audio and process the resulting text
-        
+
         Args:
             audio_bytes: Audio data as bytes
             transcription_model: Model to use for transcription
             chat_model: Model to use for text processing
             system_prompt: System prompt for text processing
+            mode: Transcription mode - "stt" (dedicated transcription
+                  endpoint) or "chat_audio" (multimodal chat model)
             callback: Optional callback function for progress updates
-            
+
         Returns:
             Dictionary with original and processed text
         """
@@ -217,7 +222,8 @@ class SpeechAgent(Agent):
                 
             transcription_result = await self.execute_tool("transcribe", {
                 "file_path": tmp_file_path,
-                "model": transcription_model
+                "model": transcription_model,
+                "mode": mode
             })
             
             if transcription_result.get("isError", False):

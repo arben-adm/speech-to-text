@@ -1,18 +1,59 @@
-from typing import Tuple, Optional, List, Dict, Any
+from typing import Tuple, Optional, List
 import os
 import time
-import json
+import base64
+import requests
 from pydub import AudioSegment
 from openai import OpenAI, OpenAIError, NotFoundError
-import re
 
 from .base_provider import BaseAudioProvider, BaseTextProvider
 from prompts import PromptTemplate
-from .openai_provider import OpenAIAudioProvider
-from .groq_provider import GroqAudioProvider
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+DEFAULT_STT_MODELS = [
+    "openai/whisper-1",
+    "openai/gpt-4o-mini-transcribe",
+    "openai/gpt-4o-transcribe",
+]
+
+DEFAULT_CHAT_AUDIO_MODELS = [
+    "google/gemini-2.5-flash",
+    "openai/gpt-4o-audio-preview",
+]
+
+DEFAULT_CHAT_MODELS = [
+    "openai/gpt-4o",
+    "openai/gpt-4o-mini",
+    "anthropic/claude-sonnet-4.5",
+    "google/gemini-2.5-flash",
+    "openrouter/auto",
+]
+
+
+def _fetch_models(api_key: str, **params) -> List[str]:
+    """Fetch model ids from OpenRouter's /models endpoint with optional filters"""
+    response = requests.get(
+        f"{OPENROUTER_BASE_URL}/models",
+        headers={"Authorization": f"Bearer {api_key}"},
+        params=params,
+        timeout=15,
+    )
+    response.raise_for_status()
+    return sorted(model["id"] for model in response.json().get("data", []))
+
 
 class OpenRouterAudioProvider(BaseAudioProvider):
-    """OpenRouter implementation of the audio provider that routes to OpenAI and Groq"""
+    """OpenRouter implementation of the audio provider.
+
+    Supports two transcription modes:
+      - "stt": OpenRouter's dedicated /audio/transcriptions endpoint
+        (OpenAI SDK compatible, works with Whisper-class and token-priced
+        STT models)
+      - "chat_audio": sends the audio as input_audio content to a
+        multimodal chat completions model, useful when conversational
+        analysis of the audio (not just verbatim transcription) is wanted
+    """
 
     def __init__(self, api_key: str):
         """
@@ -21,28 +62,12 @@ class OpenRouterAudioProvider(BaseAudioProvider):
         Args:
             api_key: OpenRouter API key
         """
-        self.openrouter_api_key = api_key
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        self.groq_api_key = os.getenv("GROQ_API_KEY")
-
-        # Initialize the OpenRouter client for text processing
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1"
-        )
-
-        # Initialize provider-specific clients if API keys are available
-        self.providers: Dict[str, BaseAudioProvider] = {}
-
-        if self.openai_api_key:
-            self.providers['openai'] = OpenAIAudioProvider(self.openai_api_key)
-
-        if self.groq_api_key:
-            self.providers['groq'] = GroqAudioProvider(self.groq_api_key)
+        self.api_key = api_key
+        self.client = OpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL)
 
     def downsample_audio(self, audio_segment: AudioSegment) -> AudioSegment:
         """
-        Downsample audio to 16kHz mono (required by Whisper)
+        Downsample audio to 16kHz mono (required by most transcription models)
 
         Args:
             audio_segment: Audio segment to downsample
@@ -52,87 +77,125 @@ class OpenRouterAudioProvider(BaseAudioProvider):
         """
         return audio_segment.set_frame_rate(16000).set_channels(1)
 
-    def _get_provider_from_model(self, model: str) -> str:
+    def transcribe_file(self, file_path: str, model: str, mode: str = "stt") -> Tuple[str, bool]:
         """
-        Extract provider from model string
-
-        Args:
-            model: Model string (e.g., 'openai/whisper-1', 'groq/whisper-large-v3')
-
-        Returns:
-            Provider name
-        """
-        if '/' in model:
-            return model.split('/')[0].lower()
-
-        # Default mappings for models without explicit provider
-        if model.startswith('whisper-large-v3') or model.startswith('llama'):
-            return 'groq'
-        else:
-            return 'openai'  # Default to OpenAI for other models
-
-    def _get_base_model_name(self, model: str) -> str:
-        """
-        Extract base model name from model string
-
-        Args:
-            model: Model string (e.g., 'openai/whisper-1', 'groq/whisper-large-v3')
-
-        Returns:
-            Base model name
-        """
-        if '/' in model:
-            return model.split('/', 1)[1]
-        return model
-
-    def transcribe_file(self, file_path: str, model: str) -> Tuple[str, bool]:
-        """
-        Transcribe an audio file by routing to the appropriate provider
+        Transcribe an audio file via OpenRouter
 
         Args:
             file_path: Path to the audio file
-            model: Model to use for transcription (format: 'provider/model' or just 'model')
+            model: Model to use for transcription
+            mode: "stt" (dedicated transcription endpoint) or "chat_audio"
+                  (multimodal chat completions model)
 
         Returns:
             Tuple containing (transcription_text, success_flag)
         """
-        # Extract provider and base model name
-        provider_name = self._get_provider_from_model(model)
-        base_model = self._get_base_model_name(model)
+        temp_path = ""
+        try:
+            audio = AudioSegment.from_file(file_path)
+            audio = self.downsample_audio(audio)
 
-        # Check if we have the provider available
-        if provider_name not in self.providers:
-            missing_key = f"{provider_name.upper()}_API_KEY"
-            return f"Error: {missing_key} not set. Please add it to your .env file.", False
+            temp_path = file_path + '_optimized.wav'
+            audio.export(temp_path, format='wav')
 
-        # Route to the appropriate provider
-        provider = self.providers[provider_name]
-        return provider.transcribe_file(file_path, base_model)
+            if mode == "chat_audio":
+                return self._transcribe_via_chat(temp_path, model)
+            return self._transcribe_via_stt_endpoint(temp_path, model)
 
-    def get_available_transcription_models(self) -> List[str]:
+        except Exception as e:
+            return f"Transcription error: {str(e)}", False
+
+        finally:
+            # Delete temporary file with retries
+            if temp_path and os.path.exists(temp_path):
+                max_retries = 3
+                for i in range(max_retries):
+                    try:
+                        os.unlink(temp_path)
+                        break
+                    except PermissionError:
+                        if i < max_retries - 1:  # Don't wait on last attempt
+                            time.sleep(0.1 * (i + 1))
+
+    def _transcribe_via_stt_endpoint(self, temp_path: str, model: str) -> Tuple[str, bool]:
+        """Transcribe using OpenRouter's dedicated /audio/transcriptions endpoint"""
+        with open(temp_path, 'rb') as f:
+            try:
+                transcription = self.client.audio.transcriptions.create(
+                    model=model,
+                    file=f,
+                    language="de",
+                    prompt="This is a recording of a German speaker.",
+                )
+                return transcription.text, True
+            except NotFoundError:
+                print(f"Model {model} not found, using default model 'openai/whisper-1'.")
+                f.seek(0)
+                transcription = self.client.audio.transcriptions.create(
+                    model="openai/whisper-1",
+                    file=f,
+                    language="de",
+                    prompt="This is a recording of a German speaker.",
+                )
+                return transcription.text, True
+            except OpenAIError as e:
+                return f"Transcription error: {str(e)}", False
+
+    def _transcribe_via_chat(self, temp_path: str, model: str) -> Tuple[str, bool]:
+        """Transcribe by sending the audio as input_audio to a multimodal chat model"""
+        with open(temp_path, 'rb') as f:
+            base64_audio = base64.b64encode(f.read()).decode("utf-8")
+
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Transcribe this German audio recording verbatim. Return only the transcript, no commentary.",
+                            },
+                            {
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "data": base64_audio,
+                                    "format": "wav",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            )
+            return response.choices[0].message.content, True
+        except OpenAIError as e:
+            return f"Transcription error: {str(e)}", False
+
+    def get_available_transcription_models(self, mode: str = "stt") -> List[str]:
         """
-        Get available transcription models from all configured providers
+        Get available transcription models from OpenRouter
+
+        Args:
+            mode: "stt" lists models exposing the "transcription" output
+                  modality, "chat_audio" lists chat models that accept
+                  "audio" as an input modality
 
         Returns:
-            List of available model names with provider prefixes
+            List of available model names
         """
-        models = []
+        try:
+            if mode == "chat_audio":
+                models = _fetch_models(self.api_key, input_modalities="audio")
+            else:
+                models = _fetch_models(self.api_key, output_modalities="transcription")
 
-        # Add OpenAI models if available
-        if 'openai' in self.providers:
-            openai_models = ['openai/' + model for model in self.providers['openai'].get_available_transcription_models()]
-            models.extend(openai_models)
+            if models:
+                return models
+        except Exception as e:
+            print(f"Error fetching OpenRouter transcription models: {str(e)}")
 
-        # Add Groq models if available
-        if 'groq' in self.providers:
-            groq_models = ['groq/' + model for model in self.providers['groq'].get_available_transcription_models()]
-            models.extend(groq_models)
-
-        # If no providers are configured, return a message as the first option
-        if not models:
-            models = ["Please configure OPENAI_API_KEY and/or GROQ_API_KEY in your .env file"]
-
-        return models
+        return DEFAULT_CHAT_AUDIO_MODELS if mode == "chat_audio" else DEFAULT_STT_MODELS
 
 
 class OpenRouterTextProvider(BaseTextProvider):
@@ -145,9 +208,10 @@ class OpenRouterTextProvider(BaseTextProvider):
         Args:
             api_key: OpenRouter API key
         """
+        self.api_key = api_key
         self.client = OpenAI(
             api_key=api_key,
-            base_url="https://openrouter.ai/api/v1"
+            base_url=OPENROUTER_BASE_URL
         )
 
     def process_text(self, text: str, prompt_template: PromptTemplate, model: str = None, temperature: float = 0.2) -> Optional[str]:
@@ -165,37 +229,7 @@ class OpenRouterTextProvider(BaseTextProvider):
         """
         try:
             # Default model if none provided
-            model_name = model if model else "openai/gpt-4o"
-
-            # Validate model - ensure it's not a transcription model
-            if 'whisper' in model_name.lower():
-                return f"Error: '{model_name}' is a transcription model, not a chat model. Please select a chat model."
-
-            # Get available models to validate
-            try:
-                available_models = self.get_available_chat_models()
-                if model_name not in available_models and model_name != "openrouter/auto":
-                    # Try to find a similar model as fallback
-                    provider_prefix = model_name.split('/')[0] if '/' in model_name else None
-
-                    if provider_prefix:
-                        # Look for models from the same provider
-                        provider_models = [m for m in available_models if m.startswith(f"{provider_prefix}/")]
-                        if provider_models:
-                            fallback_model = provider_models[0]
-                            print(f"Model '{model_name}' not found, using '{fallback_model}' instead")
-                            model_name = fallback_model
-                        else:
-                            # If no models from that provider, use auto routing
-                            print(f"No models found from provider '{provider_prefix}', using auto routing")
-                            model_name = "openrouter/auto"
-                    else:
-                        # If no provider prefix, use auto routing
-                        print(f"Model '{model_name}' not found, using auto routing")
-                        model_name = "openrouter/auto"
-            except Exception as e:
-                # Continue with the provided model if we can't validate
-                print(f"Warning: Could not validate model: {str(e)}")
+            model_name = model if model else "openai/gpt-4o-mini"
 
             # Add provider preferences for better routing
             response = self.client.chat.completions.create(
@@ -250,52 +284,12 @@ class OpenRouterTextProvider(BaseTextProvider):
             List of available model names
         """
         try:
-            # Fetch all models from OpenRouter API
-            response = self.client.models.list()
+            models = _fetch_models(self.api_key, output_modalities="text")
 
-            # Extract model IDs
-            models = [model.id for model in response.data]
-
-            # Add special routing option
-            models.append("openrouter/auto")
-
-            if not models or len(models) <= 1:  # Only the auto option
-                # Fallback to known models if API doesn't return any
-                return [
-                    # OpenAI models
-                    "openai/gpt-4o",
-                    "openai/gpt-4o-mini",
-                    "openai/o1",
-                    "openai/o1-mini",
-                    "openai/gpt-4-turbo",
-                    # Groq models
-                    "groq/llama-3.3-70b-versatile",
-                    "groq/llama-3.1-8b-instant",
-                    # Anthropic models
-                    "anthropic/claude-3-opus-20240229",
-                    "anthropic/claude-3-sonnet-20240229",
-                    # Special routing
-                    "openrouter/auto"
-                ]
-
-            return models
-
+            if models:
+                # Add special routing option
+                return models + ["openrouter/auto"]
         except Exception as e:
-            print(f"Error fetching OpenRouter models: {str(e)}")
-            # Fallback to known models if API call fails
-            return [
-                # OpenAI models
-                "openai/gpt-4o",
-                "openai/gpt-4o-mini",
-                "openai/o1",
-                "openai/o1-mini",
-                "openai/gpt-4-turbo",
-                # Groq models
-                "groq/llama-3.3-70b-versatile",
-                "groq/llama-3.1-8b-instant",
-                # Anthropic models
-                "anthropic/claude-3-opus-20240229",
-                "anthropic/claude-3-sonnet-20240229",
-                # Special routing
-                "openrouter/auto"
-            ]
+            print(f"Error fetching OpenRouter chat models: {str(e)}")
+
+        return DEFAULT_CHAT_MODELS

@@ -1,6 +1,26 @@
-[build-system]
-requires = ["setuptools>=42", "wheel"]
-build-backend = "setuptools.build_meta"
+[project]
+name = "speech-to-text"
+version = "0.1.0"
+description = "AI-powered speech transcription and text processing, running entirely on OpenRouter"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit>=1.44.1",
+    "python-dotenv",
+    "streamlit-mic-recorder",
+    "pydub",
+    "openai",
+    "requests",
+    "mcp",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.uv]
+package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

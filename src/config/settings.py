@@ -7,15 +7,10 @@ class Settings(BaseSettings):
     DEFAULT_SAMPLE_RATE: int = 16000
     DEFAULT_CHANNELS: int = 1
     
-    PROVIDER_CONFIGS: Dict[str, Dict] = {
-        "groq": {
-            "base_url": "https://api.groq.com/openai/v1",
-            "default_model": "whisper-large-v3"
-        },
-        "openai": {
-            "default_model": "whisper-1"
-        }
-    }
-    
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    DEFAULT_TRANSCRIPTION_MODEL: str = "openai/whisper-1"
+    DEFAULT_CHAT_AUDIO_MODEL: str = "google/gemini-2.5-flash"
+    DEFAULT_CHAT_MODEL: str = "openai/gpt-4o-mini"
+
     class Config:
         env_file = ".env"

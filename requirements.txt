@@ -1,9 +1,0 @@
-streamlit
-python-dotenv
-groq
-streamlit-mic-recorder
-pydub
-openai
-mcp
-asyncio
-uuid
