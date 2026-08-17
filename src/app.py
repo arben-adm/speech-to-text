@@ -111,6 +111,9 @@ class TranscriptionApp:
 
         if not api_key:
             st.warning("OPENROUTER_API_KEY not found. Please add it to your .env file.")
+            self.transcriber = None
+            self.text_processor = None
+            return
 
         self.transcriber = AudioTranscriber(provider=PROVIDER, api_key=api_key)
         self.text_processor = TextProcessor(provider=PROVIDER, api_key=api_key)
@@ -582,6 +585,10 @@ class TranscriptionApp:
 
     def setup_transcription_ui(self):
         """Original UI für Transkription"""
+        if self.transcriber is None or self.text_processor is None:
+            st.error("OPENROUTER_API_KEY ist nicht gesetzt. Bitte in der .env-Datei hinterlegen, um Transkription und Textverarbeitung zu nutzen.")
+            return
+
         st.caption("**Provider:** OpenRouter")
 
         # Interactive toggles
