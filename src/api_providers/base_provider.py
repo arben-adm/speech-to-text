@@ -26,7 +26,7 @@ class BaseAudioProvider(ABC):
     """Abstract base class for audio transcription providers"""
 
     @abstractmethod
-    def transcribe_file(self, file_path: str, model: str, mode: str = "stt") -> Tuple[str, bool]:
+    def transcribe_file(self, file_path: str, model: str, mode: str = "stt", language: Optional[str] = "de") -> Tuple[str, bool]:
         """
         Transcribe an audio file
 
@@ -36,6 +36,8 @@ class BaseAudioProvider(ABC):
             mode: Transcription mode - "stt" for the dedicated transcription
                   endpoint, or "chat_audio" to send the audio as input to a
                   multimodal chat completions model
+            language: ISO-639-1 language code (e.g. "de"), or None to let
+                      the model auto-detect the spoken language
 
         Returns:
             Tuple containing (transcription_text, success_flag)

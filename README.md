@@ -84,19 +84,25 @@ The transcription tab (and the agent's "Process audio" tab) exposes two toggles:
   - *Speech-to-Text endpoint* — uses OpenRouter's dedicated `/audio/transcriptions` endpoint (Whisper-class and token-priced STT models). Fast, cheap, produces a verbatim transcript.
   - *Chat Completions (multimodal audio)* — sends the audio as `input_audio` content to a multimodal chat model (e.g. Gemini, GPT-4o Audio). Useful when you want the model to reason about the audio rather than just transcribe it verbatim.
   - The available model list updates automatically based on the selected mode.
-- **Automatically process transcription** — when enabled (default), the transcript is immediately run through the selected prompt template. Disable it to only get the raw transcript (with a download button).
+- **Automatically process transcription** — when enabled (default), the transcript is immediately run through the selected prompt template. Disable it to only get the raw, 100% unmodified speech-to-text output (with a download button) — no prompt is applied at all.
+
+The agent's "Process audio" tab additionally has a **"Nur transkribieren (kein Nachbearbeitungsschritt)"** toggle: when enabled, the agent skips the text-processing tool entirely and returns the verbatim transcript, the same as disabling auto-processing on the main tab.
+
+Default models: `mistralai/voxtral-small-24b-2507-stt` for the STT endpoint and `openai/gpt-5.6-sol` for chat/text-processing (configurable in `src/config/settings.py`). If a configured default isn't in the live model list returned by OpenRouter, the first available model is preselected instead — nothing breaks.
 
 ## How it Works
 
 1. The `AudioTranscriber` class initializes speech recognition
-2. Audio is either recorded via microphone or loaded from a file
-3. Audio quality is automatically optimized (downsampled to 16kHz mono)
-4. Transcription is performed via OpenRouter, using either its dedicated transcription endpoint or a multimodal chat model, depending on the selected mode
-5. The recognized text is returned and, if auto-processing is enabled, further processed
-6. The `TextProcessor` class processes the transcribed text based on the chosen prompt template (also via OpenRouter)
-7. The `MCPClient` class connects to configured MCP servers and provides access to their tools
-8. The `Agent` and `SpeechAgent` classes combine the speech-to-text functionality with MCP server tools
-9. Robust error handling catches and provides user-friendly messages for common issues
+2. Audio is either recorded via microphone (WAV) or loaded from an uploaded file (mp3/wav/m4a, kept in its original extension on disk)
+3. Audio quality is automatically optimized: downsampled to 16kHz mono and re-encoded as MP3 at ~64kbps, since both OpenRouter transcription modes accept MP3 directly - this keeps a 25MB upload budget covering roughly 50 minutes of speech instead of the ~13 minutes a 16kHz mono WAV would allow
+4. Transcription is performed via OpenRouter, using either its dedicated transcription endpoint or a multimodal chat model, depending on the selected mode. The `input_audio.format` sent to the chat-completions mode always matches the actual prepared file
+5. If the prepared file still exceeds the 25MB endpoint cap (very long recordings), it's split into <=10-minute chunks first. Each cut point is snapped to the nearest detected silence within a +/-15s window so words aren't sliced mid-utterance; the parts are transcribed sequentially and joined with a single space
+6. Transcription language defaults to German (`language="de"`, paired with a German-speaker hint prompt); pass `language=None` to let the model auto-detect the spoken language instead
+7. The recognized text is returned and, if auto-processing is enabled, further processed
+8. The `TextProcessor` class processes the transcribed text based on the chosen prompt template (also via OpenRouter)
+9. The `MCPClient` class connects to configured MCP servers and provides access to their tools
+10. The `Agent` and `SpeechAgent` classes combine the speech-to-text functionality with MCP server tools
+11. Robust error handling catches and provides user-friendly messages for common issues
 
 ## System Requirements
 
@@ -113,7 +119,10 @@ The transcription tab (and the agent's "Process audio" tab) exposes two toggles:
 
 The AudioTranscriber class provides functions for speech recognition:
 
-- `transcribe_file(file_path, model)`: Transcribes an audio file using the specified model
+- `transcribe_file(file_path, model, mode="stt", language="de")`: Transcribes an audio file using the specified model
+  - `mode`: `"stt"` for OpenRouter's dedicated `/audio/transcriptions` endpoint, or `"chat_audio"` to send the audio to a multimodal chat model
+  - `language`: ISO-639-1 code (default `"de"`, paired with a German-speaker hint prompt). Pass `None` to omit both the `language` parameter and the hint prompt, letting the model auto-detect the spoken language
+  - Internally, the audio is downsampled to 16kHz mono and re-encoded as MP3 (~64kbps) before upload - MP3 is accepted by both transcription modes, so no lossy WAV blow-up is needed. If the prepared file still exceeds the 25MB endpoint cap, it's split into <=10-minute chunks with cut points snapped to nearby silence, transcribed part by part, and joined into a single string
 
 ### TextProcessor Class
 
@@ -147,7 +156,13 @@ The application includes AI agent capabilities:
 
 ### Prompt Templates
 
-Prompt templates are defined in `prompts.py` and can be easily extended or customized.
+Built-in templates are defined in `prompts.py`, but they're just the seed data: `prompt_store.py` persists the actual, editable set to `prompt_templates.json` (created on first run). From the "Prompt-Vorlage bearbeiten / hinzufügen / löschen" expander on the Transcription tab you can:
+
+- Edit a template's name, description, or system prompt in place (**💾 Änderungen speichern**)
+- Duplicate/create one under a new name (**➕ Als neue Vorlage speichern**)
+- Remove one (**🗑️ Vorlage löschen** — at least one template must always remain)
+
+Unsaved edits still apply immediately to the current transcription run, so you can try a tweak before deciding whether to persist it.
 
 ### Running Tests
 
@@ -191,6 +206,15 @@ This structure allows both the app and tests to run correctly. The `conftest.py`
 3. **API Connection Issues**:
    - If you encounter API connection errors, check your internet connection and API key
    - Ensure `OPENROUTER_API_KEY` is correctly set in the `.env` file
+
+4. **"ffmpeg is required..." error**:
+   - Audio is downsampled and re-encoded to MP3 before upload, which needs FFmpeg on PATH (see [System Requirements](#system-requirements)/Installation step 4). Without it, both reading the source file and exporting the prepared MP3 will fail with a clear error instead of silently falling back to WAV
+
+5. **File rejected as too large**:
+   - Uploads larger than 25MB (`MAX_AUDIO_SIZE`) are rejected upfront in the UI. This is a raw-upload safety cap, not the same as the transcription limit: after downsampling/MP3 re-encoding, a compact-but-long recording can still end up needing to be transcribed in chunks (you'll see an info banner when that happens) even though the original upload was well under 25MB
+
+6. **Long recordings transcribed in multiple parts**:
+   - If the MP3-encoded audio would still exceed the endpoint's 25MB cap (roughly 50+ minutes at the ~64kbps mono encoding used here), it's automatically split into <=10-minute chunks at nearby silence and transcribed sequentially, then joined into one transcript - no manual splitting needed
 
 ## Contributing
 

@@ -192,6 +192,8 @@ class SpeechAgent(Agent):
         chat_model: str,
         system_prompt: str,
         mode: str = "stt",
+        file_suffix: str = ".wav",
+        skip_processing: bool = False,
         callback: Optional[Callable[[str, str, str], Awaitable[None]]] = None
     ) -> Dict[str, str]:
         """
@@ -204,6 +206,11 @@ class SpeechAgent(Agent):
             system_prompt: System prompt for text processing
             mode: Transcription mode - "stt" (dedicated transcription
                   endpoint) or "chat_audio" (multimodal chat model)
+            file_suffix: Extension (with leading dot) matching the source
+                         audio's real format, e.g. ".mp3". Defaults to
+                         ".wav" for the microphone-recording path.
+            skip_processing: If True, return the raw transcription untouched
+                              and skip the text-processing step entirely.
             callback: Optional callback function for progress updates
 
         Returns:
@@ -212,7 +219,7 @@ class SpeechAgent(Agent):
         tmp_file_path = ""
         try:
             # Save audio to a temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_suffix) as tmp_file:
                 tmp_file.write(audio_bytes)
                 tmp_file_path = tmp_file.name
             
@@ -234,11 +241,21 @@ class SpeechAgent(Agent):
                 }
             
             original_text = transcription_result.get("result", "")
-            
+
             if callback:
                 await callback("transcription", original_text, "")
+
+            if skip_processing:
+                if callback:
+                    await callback("processed", original_text, "")
+                return {
+                    "original_text": original_text,
+                    "processed_text": original_text
+                }
+
+            if callback:
                 await callback("status", "Processing text...", "")
-            
+
             # Process the transcribed text
             processing_result = await self.execute_tool("process_text", {
                 "text": original_text,

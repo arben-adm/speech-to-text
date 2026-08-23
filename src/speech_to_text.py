@@ -14,7 +14,7 @@ class AudioTranscriber:
         self.provider = provider.lower()
         self.audio_provider = ProviderFactory.get_audio_provider(provider, api_key)
 
-    def transcribe_file(self, file_path: str, model: str, mode: str = "stt") -> Tuple[str, bool]:
+    def transcribe_file(self, file_path: str, model: str, mode: str = "stt", language: str | None = "de") -> Tuple[str, bool]:
         """
         Transcribe an audio file using the selected provider
 
@@ -23,11 +23,13 @@ class AudioTranscriber:
             model: Model to use for transcription
             mode: "stt" (dedicated transcription endpoint) or "chat_audio"
                   (multimodal chat completions model)
+            language: ISO-639-1 language code (e.g. "de"), or None to let
+                      the model auto-detect the spoken language
 
         Returns:
             Tuple containing (transcription_text, success_flag)
         """
-        return self.audio_provider.transcribe_file(file_path, model, mode=mode)
+        return self.audio_provider.transcribe_file(file_path, model, mode=mode, language=language)
 
     def get_available_models(self, mode: str = "stt") -> List[str]:
         """

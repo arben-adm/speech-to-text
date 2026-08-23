@@ -25,7 +25,18 @@ def mock_api_key():
 def mock_audio_file():
     """Fixture that provides a path to a test audio file"""
     return os.path.join(os.path.dirname(__file__), 'fixtures', 'test_audio.wav')
-    
+
+@pytest.fixture
+def tone_mp3_path():
+    """Fixture that provides a path to a short MP3 tone fixture"""
+    return os.path.join(os.path.dirname(__file__), 'fixtures', 'tone.mp3')
+
+@pytest.fixture
+def tone_silence_wav_path():
+    """Fixture that provides a path to a tone/silence/tone WAV fixture for chunking tests"""
+    return os.path.join(os.path.dirname(__file__), 'fixtures', 'tone_silence.wav')
+
+
 @pytest.fixture
 def sample_text():
     """Fixture that provides sample text for testing"""

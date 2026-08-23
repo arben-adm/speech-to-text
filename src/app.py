@@ -2,14 +2,25 @@ import streamlit as st
 import asyncio
 from speech_to_text import AudioTranscriber
 from text_processors import TextProcessor
-from prompts import AVAILABLE_PROMPTS, PromptTemplate
+from prompts import PromptTemplate
+import prompt_store
 from streamlit_mic_recorder import mic_recorder
 import uuid
 import tempfile
 from dotenv import load_dotenv
 import os
+import io
 import time
 import json
+from pathlib import Path
+from pydub import AudioSegment
+from config.settings import (
+    MAX_AUDIO_SIZE,
+    SUPPORTED_AUDIO_FORMATS,
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_TRANSCRIPTION_MODEL,
+    DEFAULT_CHAT_AUDIO_MODEL,
+)
 from mcp_client import get_mcp_client, run_async
 from agents.agent import Agent
 from agents.speech_agent import SpeechAgent
@@ -23,6 +34,18 @@ STT_MODE_LABELS = {
     "stt": "Speech-to-Text endpoint",
     "chat_audio": "Chat Completions (multimodal audio)",
 }
+
+
+def _pick_default_model(options: list, preferred: str, fallback: str = "default-model") -> str:
+    """Pick the configured default model if the (live or fallback) model list offers it, else its first entry"""
+    if not options or options[0].startswith("No ") or options[0].startswith("Error"):
+        return fallback
+    return preferred if preferred in options else options[0]
+
+
+def _default_index(options: list, preferred: str) -> int:
+    """Index of the configured default model within options, for pre-selecting a selectbox"""
+    return options.index(preferred) if preferred in options else 0
 
 class TranscriptionApp:
     def __init__(self):
@@ -39,6 +62,10 @@ class TranscriptionApp:
         # transcription, or leave it as a raw transcript
         if 'auto_process' not in st.session_state:
             st.session_state.auto_process = True
+
+        # User-editable prompt templates, persisted to prompt_templates.json
+        if 'prompt_templates' not in st.session_state:
+            st.session_state.prompt_templates = prompt_store.load_templates()
 
         # Cache für transkribierte Texte
         if 'transcription_cache' not in st.session_state:
@@ -128,8 +155,8 @@ class TranscriptionApp:
             chat_models = models.get('chat', [])
             transcription_models = models.get('transcription_stt', [])
 
-            default_chat_model = chat_models[0] if chat_models and chat_models[0].startswith("No") is False else "default-model"
-            default_transcription_model = transcription_models[0] if transcription_models and transcription_models[0].startswith("No") is False else "default-model"
+            default_chat_model = _pick_default_model(chat_models, DEFAULT_CHAT_MODEL)
+            default_transcription_model = _pick_default_model(transcription_models, DEFAULT_TRANSCRIPTION_MODEL)
 
             try:
                 # Create the SpeechAgent with the current provider and models
@@ -431,19 +458,31 @@ class TranscriptionApp:
 
         # Model selection
         models = self.get_available_models(mode=mode)
+        default_transcription_model = DEFAULT_TRANSCRIPTION_MODEL if mode == "stt" else DEFAULT_CHAT_AUDIO_MODEL
         col1, col2 = st.columns(2)
         with col1:
             chat_model = st.selectbox(
                 "Chat model:",
                 options=models['chat'],
+                index=_default_index(models['chat'], DEFAULT_CHAT_MODEL),
                 key="agent_chat_model"
             )
         with col2:
             transcription_model = st.selectbox(
                 "Transcription model:",
                 options=models['transcription'],
+                index=_default_index(models['transcription'], default_transcription_model),
                 key="agent_transcription_model"
             )
+
+        # Toggle: skip the agent's text-processing step entirely and return
+        # the raw, unmodified transcript
+        raw_only = st.toggle(
+            "Nur transkribieren (kein Nachbearbeitungsschritt)",
+            value=False,
+            key="agent_raw_only",
+            help="Wenn aktiviert, wird die Audiodatei nur transkribiert und 1:1 zurückgegeben - der Agent führt keinerlei Nachbearbeitung mit dem Chat-Modell durch."
+        )
 
         # Direct system prompt for the agent
         st.subheader("Agent instructions")
@@ -451,7 +490,8 @@ class TranscriptionApp:
             "Give the agent instructions on how to process the audio file:",
             value="Transcribe the audio file and summarize the key points.",
             height=100,
-            key="agent_system_prompt"
+            key="agent_system_prompt",
+            disabled=raw_only
         )
 
         # Tabs for input methods
@@ -460,11 +500,11 @@ class TranscriptionApp:
         with tab1:
             uploaded_file = st.file_uploader(
                 "Upload audio",
-                type=['mp3','wav','m4a'],
+                type=SUPPORTED_AUDIO_FORMATS,
                 key="agent_audio_upload"
             )
             if uploaded_file:
-                self.handle_agent_file_upload(uploaded_file, transcription_model, chat_model, system_prompt, mode)
+                self.handle_agent_file_upload(uploaded_file, transcription_model, chat_model, system_prompt, mode, raw_only)
 
         with tab2:
             st.write("Record your voice directly:")
@@ -478,64 +518,66 @@ class TranscriptionApp:
 
             if audio:
                 st.audio(audio['bytes'])
-                self.handle_agent_recording(audio['bytes'], transcription_model, chat_model, system_prompt, mode)
+                self.handle_agent_recording(audio['bytes'], transcription_model, chat_model, system_prompt, mode, raw_only)
 
-    def handle_agent_file_upload(self, uploaded_file, transcription_model, chat_model, system_prompt, mode="stt"):
+    def handle_agent_file_upload(self, uploaded_file, transcription_model, chat_model, system_prompt, mode="stt", raw_only=False):
         """Processes an uploaded audio file with the agent"""
+        if uploaded_file.size > MAX_AUDIO_SIZE:
+            st.error(f"File exceeds the maximum allowed size of {MAX_AUDIO_SIZE // (1024 * 1024)} MB.")
+            return
+
         with st.spinner("Verarbeite Audio..."):
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
-                # Datei speichern
-                tmp_file.write(uploaded_file.getvalue())
+            audio_bytes = uploaded_file.getvalue()
+            self._warn_if_will_chunk(audio_bytes)
 
-                # Callback-Funktion für Fortschrittsaktualisierungen
-                results_container = st.container()
-                progress = st.progress(0)
+            # Callback-Funktion für Fortschrittsaktualisierungen
+            results_container = st.container()
+            progress = st.progress(0)
 
-                async def update_progress(status_type, status_text, additional_info=""):
-                    if status_type == "status":
-                        if status_text == "Transcribing audio...":
-                            progress.progress(25)
-                        elif status_text == "Processing text...":
-                            progress.progress(75)
-                    elif status_type == "transcription":
-                        progress.progress(50)
-                        with results_container:
-                            st.subheader("Transkription:")
-                            st.write(status_text)
-                    elif status_type == "processed":
-                        progress.progress(100)
-                        with results_container:
-                            st.subheader("Verarbeiteter Text:")
-                            st.write(status_text)
-                    elif status_type == "error":
-                        progress.progress(100)
-                        with results_container:
-                            st.error(status_text)
-
-                # Transkribiere und verarbeite mit dem Agenten
-                result = run_async(st.session_state.agent.transcribe_and_process(
-                    audio_bytes=uploaded_file.getvalue(),
-                    transcription_model=transcription_model,
-                    chat_model=chat_model,
-                    system_prompt=system_prompt,
-                    mode=mode,
-                    callback=update_progress
-                ))
-
-                # Zeige Download-Button an, wenn erfolgreich
-                if "processed_text" in result:
+            async def update_progress(status_type, status_text, additional_info=""):
+                if status_type == "status":
+                    if status_text == "Transcribing audio...":
+                        progress.progress(25)
+                    elif status_text == "Processing text...":
+                        progress.progress(75)
+                elif status_type == "transcription":
+                    progress.progress(50)
                     with results_container:
-                        st.download_button(
-                            label="Verarbeiteten Text herunterladen",
-                            data=result["processed_text"],
-                            file_name="processed_text.txt",
-                            mime="text/plain"
-                        )
+                        st.subheader("Transkription:")
+                        st.write(status_text)
+                elif status_type == "processed":
+                    progress.progress(100)
+                    with results_container:
+                        st.subheader("Verarbeiteter Text:")
+                        st.write(status_text)
+                elif status_type == "error":
+                    progress.progress(100)
+                    with results_container:
+                        st.error(status_text)
 
-                # Aufräumen
-                os.unlink(tmp_file.name)
+            # Transkribiere und verarbeite mit dem Agenten
+            result = run_async(st.session_state.agent.transcribe_and_process(
+                audio_bytes=audio_bytes,
+                transcription_model=transcription_model,
+                chat_model=chat_model,
+                system_prompt=system_prompt,
+                mode=mode,
+                file_suffix=Path(uploaded_file.name).suffix.lower(),
+                skip_processing=raw_only,
+                callback=update_progress
+            ))
 
-    def handle_agent_recording(self, audio_bytes, transcription_model, chat_model, system_prompt, mode="stt"):
+            # Zeige Download-Button an, wenn erfolgreich
+            if "processed_text" in result:
+                with results_container:
+                    st.download_button(
+                        label="Transkript herunterladen" if raw_only else "Verarbeiteten Text herunterladen",
+                        data=result["processed_text"],
+                        file_name="transcript.txt" if raw_only else "processed_text.txt",
+                        mime="text/plain"
+                    )
+
+    def handle_agent_recording(self, audio_bytes, transcription_model, chat_model, system_prompt, mode="stt", raw_only=False):
         """Verarbeitet eine Mikrofon-Aufnahme mit dem Agenten"""
         with st.spinner("Verarbeite Audio..."):
             # Callback-Funktion für Fortschrittsaktualisierungen
@@ -570,6 +612,7 @@ class TranscriptionApp:
                 chat_model=chat_model,
                 system_prompt=system_prompt,
                 mode=mode,
+                skip_processing=raw_only,
                 callback=update_progress
             ))
 
@@ -577,11 +620,67 @@ class TranscriptionApp:
             if "processed_text" in result:
                 with results_container:
                     st.download_button(
-                        label="Verarbeiteten Text herunterladen",
+                        label="Transkript herunterladen" if raw_only else "Verarbeiteten Text herunterladen",
                         data=result["processed_text"],
-                        file_name="processed_text.txt",
+                        file_name="transcript.txt" if raw_only else "processed_text.txt",
                         mime="text/plain"
                     )
+
+    def setup_prompt_template_manager(self, prompt: PromptTemplate) -> PromptTemplate:
+        """
+        Lets the user edit, save (in place or as a new template), or delete
+        prompt templates. Changes are persisted to prompt_templates.json via
+        prompt_store. Unsaved edits still apply to the current run, matching
+        the previous "edit without saving" behaviour.
+
+        Args:
+            prompt: The currently selected template
+
+        Returns:
+            The (possibly unsaved) edited template to use for this run
+        """
+        templates = st.session_state.prompt_templates
+        existing_names = [t.name for t in templates]
+        widget_suffix = prompt.name
+
+        with st.expander("Prompt-Vorlage bearbeiten / hinzufügen / löschen"):
+            edited_name = st.text_input("Name", value=prompt.name, key=f"prompt_edit_name_{widget_suffix}")
+            edited_description = st.text_input("Beschreibung", value=prompt.description, key=f"prompt_edit_description_{widget_suffix}")
+            edited_system_prompt = st.text_area("System Prompt", value=prompt.system_prompt, height=300, key=f"prompt_edit_system_prompt_{widget_suffix}")
+
+            edited_prompt = PromptTemplate(name=edited_name, description=edited_description, system_prompt=edited_system_prompt)
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("💾 Änderungen speichern", key="prompt_save_changes", use_container_width=True):
+                    if not edited_name.strip():
+                        st.error("Name darf nicht leer sein.")
+                    elif edited_name != prompt.name and edited_name in existing_names:
+                        st.error(f"Eine Vorlage namens '{edited_name}' existiert bereits.")
+                    else:
+                        st.session_state.prompt_templates = prompt_store.upsert_template(templates, edited_prompt, original_name=prompt.name)
+                        st.success("Vorlage gespeichert.")
+                        st.rerun()
+            with col2:
+                if st.button("➕ Als neue Vorlage speichern", key="prompt_save_as_new", use_container_width=True):
+                    if not edited_name.strip():
+                        st.error("Name darf nicht leer sein.")
+                    elif edited_name in existing_names:
+                        st.error(f"Eine Vorlage namens '{edited_name}' existiert bereits. Bitte einen anderen Namen wählen.")
+                    else:
+                        st.session_state.prompt_templates = prompt_store.upsert_template(templates, edited_prompt)
+                        st.success("Neue Vorlage gespeichert.")
+                        st.rerun()
+            with col3:
+                if st.button("🗑️ Vorlage löschen", key="prompt_delete", use_container_width=True):
+                    if len(templates) <= 1:
+                        st.error("Die letzte verbleibende Vorlage kann nicht gelöscht werden.")
+                    else:
+                        st.session_state.prompt_templates = prompt_store.delete_template(templates, prompt.name)
+                        st.success(f"Vorlage '{prompt.name}' gelöscht.")
+                        st.rerun()
+
+        return edited_prompt
 
     def setup_transcription_ui(self):
         """Original UI für Transkription"""
@@ -611,16 +710,19 @@ class TranscriptionApp:
 
         # Update model selection
         models = self.get_available_models()
+        default_transcription_model = DEFAULT_TRANSCRIPTION_MODEL if st.session_state.stt_mode == "stt" else DEFAULT_CHAT_AUDIO_MODEL
         col1, col2 = st.columns(2)
         with col1:
             chat_model = st.selectbox(
                 "Select Chat Model:",
-                options=models['chat']
+                options=models['chat'],
+                index=_default_index(models['chat'], DEFAULT_CHAT_MODEL)
             )
         with col2:
             transcription_model = st.selectbox(
                 "Select Transcription Model:",
-                options=models['transcription']
+                options=models['transcription'],
+                index=_default_index(models['transcription'], default_transcription_model)
             )
 
         # Prompt Template selection before tabs
@@ -629,19 +731,16 @@ class TranscriptionApp:
         with col1:
             prompt = st.selectbox(
                 "Choose a processing option:",
-                options=AVAILABLE_PROMPTS,
+                options=st.session_state.prompt_templates,
                 format_func=lambda x: x.name,
-                help="Select how the transcribed text should be processed",
+                help="Select how the transcribed text should be processed. Disable 'Automatically process transcription' above to get the raw speech-to-text output with no prompt applied at all.",
                 disabled=not st.session_state.auto_process
             )
         with col2:
             st.markdown(f"**Description:** {prompt.description}")
 
-        # Display and edit System Prompt
-        with st.expander("Show/Edit System Prompt"):
-            edited_system_prompt = st.text_area("System Prompt", value=prompt.system_prompt, height=300)
-            if edited_system_prompt != prompt.system_prompt:
-                prompt = PromptTemplate(name=prompt.name, description=prompt.description, system_prompt=edited_system_prompt)
+        # Manage prompt templates: edit in place, save as new, or delete
+        prompt = self.setup_prompt_template_manager(prompt)
 
         # Tabs for input methods
         tab1, tab2, tab3 = st.tabs(["File Upload", "Microphone Recording", "Text Input"])
@@ -649,7 +748,7 @@ class TranscriptionApp:
         with tab1:
             uploaded_file = st.file_uploader(
                 "Upload Audio",
-                type=['mp3','wav','m4a']
+                type=SUPPORTED_AUDIO_FORMATS
             )
             if uploaded_file:
                 self.handle_file_upload(uploaded_file, transcription_model, chat_model, prompt)
@@ -728,8 +827,15 @@ class TranscriptionApp:
         mode = mode or st.session_state.stt_mode
         auto_process = st.session_state.auto_process if auto_process is None else auto_process
 
+        if uploaded_file.size > MAX_AUDIO_SIZE:
+            st.error(f"File exceeds the maximum allowed size of {MAX_AUDIO_SIZE // (1024 * 1024)} MB.")
+            return
+
         with st.spinner("Processing Audio..."):
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+            self._warn_if_will_chunk(uploaded_file.getvalue())
+
+            suffix = Path(uploaded_file.name).suffix.lower()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
                 tmp_file.write(uploaded_file.getvalue())
 
                 text, success = self.transcriber.transcribe_file(
@@ -830,6 +936,18 @@ class TranscriptionApp:
                             break
                         except PermissionError:
                             time.sleep(0.1)
+
+    @staticmethod
+    def _warn_if_will_chunk(audio_bytes: bytes):
+        """Show an info banner if the audio is long enough that the provider will split it into chunks for transcription"""
+        try:
+            duration_s = AudioSegment.from_file(io.BytesIO(audio_bytes)).duration_seconds
+        except Exception:
+            return
+
+        estimated_bytes = duration_s * (64_000 / 8)  # 64kbps mono MP3
+        if estimated_bytes > MAX_AUDIO_SIZE:
+            st.info(f"This file is ~{duration_s / 60:.0f} min long and will be transcribed in multiple chunks.")
 
     def validate_text_input(self, text: str) -> tuple[bool, str]:
         """Validates the text input and returns (is_valid, message)"""
