@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import tempfile
 from typing import Dict, List, Optional, Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -10,7 +11,7 @@ class MCPClient:
     def __init__(self, config_path: str = "mcp_config.json"):
         """
         Initializes the MCP client with configuration from a JSON file
-        
+
         Args:
             config_path: Path to the MCP configuration file
         """
@@ -18,29 +19,40 @@ class MCPClient:
         self.servers = {}
         self.sessions = {}
         self.exit_stack = None
+        self._connect_attempted = False
         self.load_config()
-        
+
     def load_config(self) -> None:
         """Loads the MCP server configuration from the JSON file"""
         if not os.path.exists(self.config_path):
             with open(self.config_path, 'w') as f:
                 json.dump({"mcpServers": {}}, f, indent=2)
-            
+
         with open(self.config_path, 'r') as f:
             config = json.load(f)
             self.servers = config.get("mcpServers", {})
-    
+
     async def connect_to_servers(self) -> None:
-        """Connects to all configured MCP servers"""
+        """Connects to all configured MCP servers.
+
+        A no-op after the first call: this client is a process-wide singleton
+        (see get_mcp_client) reused by both the main app and the agent's own
+        connect() path, so without this guard every unavailable server would
+        be retried - and its connection error reprinted - on each call.
+        """
+        if self._connect_attempted:
+            return
+        self._connect_attempted = True
+
         from contextlib import AsyncExitStack
-        
+
         self.exit_stack = AsyncExitStack()
         for server_name, server_config in self.servers.items():
             try:
                 await self.connect_to_server(server_name, server_config)
             except Exception as e:
-                print(f"Error connecting to server {server_name}: {str(e)}")
-    
+                print(f"MCP server '{server_name}' not available ({e}) - skipping.")
+
     async def connect_to_server(self, server_name: str, server_config: Dict) -> None:
         """
         Connects to a single MCP server
@@ -98,27 +110,34 @@ class MCPClient:
             env=env or None
         )
         
-        try:
-            stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
-            stdin, stdout = stdio_transport
-            session = await self.exit_stack.enter_async_context(ClientSession(stdin, stdout))
-            
-            # Server initialisieren
-            await session.initialize()
-            
-            # Session speichern
-            self.sessions[server_name] = session
-            
-            # List available tools and resources
-            tools_response = await session.list_tools()
-            print(f"Server {server_name} connected with tools: {[tool.name for tool in tools_response.tools]}")
-            
-        except Exception as e:
-            print(f"Error connecting to {server_name}: {str(e)}")
-            # Show full error for debugging
-            import traceback
-            print(f"Detailed error: {traceback.format_exc()}")
-            raise
+        # Capture the child process's stderr instead of letting it write
+        # straight to our own stderr - stdio_client relays it there by
+        # default, which is what caused the raw "error: No such file or
+        # directory" lines from a failed spawn (e.g. uv) to leak into the
+        # console outside of our own error handling below. This needs a
+        # real OS-backed file (subprocess stderr requires a fileno()), an
+        # in-memory io.StringIO won't work here.
+        with tempfile.TemporaryFile(mode="w+") as errlog:
+            try:
+                stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params, errlog=errlog))
+                stdin, stdout = stdio_transport
+                session = await self.exit_stack.enter_async_context(ClientSession(stdin, stdout))
+
+                # Server initialisieren
+                await session.initialize()
+
+                # Session speichern
+                self.sessions[server_name] = session
+
+                # List available tools and resources
+                tools_response = await session.list_tools()
+                print(f"Server {server_name} connected with tools: {[tool.name for tool in tools_response.tools]}")
+
+            except Exception as e:
+                errlog.seek(0)
+                captured = errlog.read().strip().splitlines()
+                reason = captured[-1] if captured else str(e)
+                raise RuntimeError(reason) from e
     
     async def list_servers(self) -> List[str]:
         """List of all connected servers"""
