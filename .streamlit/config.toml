@@ -1,0 +1,5 @@
+[server]
+# Raw upload size cap in MB, before downsampling/chunking. The transcription
+# provider re-encodes and chunks audio internally, so this only needs to be
+# high enough for long raw recordings.
+maxUploadSize = 2048

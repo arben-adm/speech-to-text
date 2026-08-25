@@ -522,10 +522,6 @@ class TranscriptionApp:
 
     def handle_agent_file_upload(self, uploaded_file, transcription_model, chat_model, system_prompt, mode="stt", raw_only=False):
         """Processes an uploaded audio file with the agent"""
-        if uploaded_file.size > MAX_AUDIO_SIZE:
-            st.error(f"File exceeds the maximum allowed size of {MAX_AUDIO_SIZE // (1024 * 1024)} MB.")
-            return
-
         with st.spinner("Verarbeite Audio..."):
             audio_bytes = uploaded_file.getvalue()
             self._warn_if_will_chunk(audio_bytes)
@@ -826,10 +822,6 @@ class TranscriptionApp:
     def handle_file_upload(self, uploaded_file, model, chat_model, prompt, mode=None, auto_process=None):
         mode = mode or st.session_state.stt_mode
         auto_process = st.session_state.auto_process if auto_process is None else auto_process
-
-        if uploaded_file.size > MAX_AUDIO_SIZE:
-            st.error(f"File exceeds the maximum allowed size of {MAX_AUDIO_SIZE // (1024 * 1024)} MB.")
-            return
 
         with st.spinner("Processing Audio..."):
             self._warn_if_will_chunk(uploaded_file.getvalue())
